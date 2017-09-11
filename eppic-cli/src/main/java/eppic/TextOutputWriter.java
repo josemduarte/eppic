@@ -516,7 +516,7 @@ public class TextOutputWriter {
 		ps.close();
 	}
 	
-	private void printAssemblyInfo(PrintStream ps, AssemblyDB assembly) {
+	public void printAssemblyInfo(PrintStream ps, AssemblyDB assembly) {
 		// first we gather the assembly predictions and score
 		StringBuilder sb = new StringBuilder();
 		String scoreString = "";
