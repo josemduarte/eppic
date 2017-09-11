@@ -14,7 +14,9 @@ import eppic.EppicParams;
 import eppic.TextOutputWriter;
 import eppic.model.AssemblyDB;
 import eppic.model.AssemblyScoreDB;
+import eppic.model.ChainClusterDB;
 import eppic.model.PdbInfoDB;
+import eppic.model.SeqClusterDB;
 import gnu.getopt.Getopt;
 
 public class GetAssemblyPredictions {
@@ -83,41 +85,55 @@ public class GetAssemblyPredictions {
 		
 		DBHandler dbh = new DBHandler(dbName, configFile);		
 		
-		List<String> pdbIds = readListFile(listFile);
+		List<List<String>> clusters = readListFile(listFile);
 		
-		System.out.println("Read " + pdbIds.size() + " pdb ids from file " + listFile.toString());
+		System.out.println("Read " + clusters.size() + " clusters from file " + listFile.toString());
 		
+		List<List<SeqClusterDB>> allSeqInfosForCluster = new ArrayList<>();
 		EppicParams params = new EppicParams();
-		
-		for (String pdbId : pdbIds) {
-			
-			EntityManager em = dbh.getEntityManager();
-					
-			PdbInfoDB pdbInfo = dbh.deserializePdb(em, pdbId);
-			
-			if (pdbInfo==null) {
-				System.err.println("Couldn't find data for " + pdbId);
-				continue;
-			}
-			
-			List<AssemblyDB> assemblies = pdbInfo.getAssemblies();
-			
-			TextOutputWriter tow = new TextOutputWriter(pdbInfo, params);
-			
-			for (AssemblyDB ass : assemblies) {
-				
-				for (AssemblyScoreDB assScoreDb : ass.getAssemblyScores()) {
-					if (assScoreDb.getMethod().equals("eppic") && assScoreDb.getCallName().equals("bio")) {
+		int i = 0;
+		for (List<String> cluster : clusters) {
+			i++;
+			ps.printf("### Cluster %d - %d members\n", i, cluster.size()); 
 
-						ps.print(pdbId + " ");
-						tow.printAssemblyInfo(ps, ass);
-						
+			for (String pdbId : cluster) {
+
+				EntityManager em = dbh.getEntityManager();
+
+				PdbInfoDB pdbInfo = dbh.deserializePdb(em, pdbId);
+
+				if (pdbInfo==null) {
+					System.err.println("Couldn't find data for " + pdbId);
+					continue;
+				}
+
+				List<AssemblyDB> assemblies = pdbInfo.getAssemblies();
+
+				TextOutputWriter tow = new TextOutputWriter(pdbInfo, params);
+
+				for (AssemblyDB ass : assemblies) {
+
+					for (AssemblyScoreDB assScoreDb : ass.getAssemblyScores()) {
+						if (assScoreDb.getMethod().equals("eppic") && assScoreDb.getCallName().equals("bio")) {
+
+							ps.print(pdbId + " ");
+							tow.printAssemblyInfo(ps, ass);
+
+						}
 					}
 				}
+				if (pdbInfo!=null) {
+					List<SeqClusterDB> seqInfosForEntry = getSeqInfosForEntry(pdbInfo);
+					allSeqInfosForCluster.add(seqInfosForEntry);
+				}
+
+				//if (pdbInfo!=null)
+				//	ps.println(getSeqClustersInfo(pdbInfo));
+
+				em.close();
 			}
-			
-			em.close();
-			
+			ps.print(analyseClusterContents(allSeqInfosForCluster));
+			ps.println();
 		}
 		
 		ps.close();
@@ -127,8 +143,77 @@ public class GetAssemblyPredictions {
 		
 	}
 	
-	private static List<String> readListFile(File listFile) throws IOException {
-		List<String> list = new ArrayList<>();
+	private static String getSeqClustersInfo(PdbInfoDB pdbInfo) {
+		StringBuilder sb = new StringBuilder();
+		for (ChainClusterDB cc : pdbInfo.getChainClusters()) {
+			SeqClusterDB sc = cc.getSeqCluster();
+			
+			sb.append(cc.getRepChain()+" ");
+			if (sc!=null)
+				sb.append(": "+ sc.getC100() + ", " +sc.getC90() + ", " + sc.getC80() +", "+sc.getC70()+", "+sc.getC60()+", "+sc.getC50()+ " ");
+		}
+		return sb.toString();
+	}
+	
+	private static List<SeqClusterDB> getSeqInfosForEntry(PdbInfoDB pdbInfo) {
+		List<SeqClusterDB> list = new ArrayList<>();
+		for (ChainClusterDB cc : pdbInfo.getChainClusters()) {
+			SeqClusterDB sc = cc.getSeqCluster();
+			
+			list.add(sc);
+		}
+		return list;
+	}
+	
+	private static String analyseClusterContents(List<List<SeqClusterDB>> allSeqInfosForCluster) {
+		int numEntitiesFirstEntry = -1;
+		
+		boolean differentSizes = false;
+		boolean[] clusterSameContentAt50 = null;
+		
+		for (List<SeqClusterDB> seqInfosForEntry : allSeqInfosForCluster) {
+			if (numEntitiesFirstEntry == -1) 
+				numEntitiesFirstEntry = seqInfosForEntry.size();
+			else {
+				if (seqInfosForEntry.size() != numEntitiesFirstEntry) {
+					differentSizes = true;
+					continue;
+				}
+			}
+			// the references for each entity in an entry, assuming all members of cluster have same # of entities 
+			int[] refSeq50s = new int[numEntitiesFirstEntry];
+			for (int i=0;i<refSeq50s.length;i++) refSeq50s[i] = -2;
+			
+			clusterSameContentAt50 = new boolean[numEntitiesFirstEntry];
+			for (int i=0;i<clusterSameContentAt50.length;i++) clusterSameContentAt50[i] = true;
+			
+			int i = 0;
+			for (SeqClusterDB sc : seqInfosForEntry) {
+				if (refSeq50s[i]==-2) 
+					refSeq50s[i] = sc.getC50();
+				else {
+					if (sc.getC50() != refSeq50s[i]) {
+						clusterSameContentAt50[i] = false;
+					}
+				}
+				i++;
+			}
+
+		}
+		String analysis = "";
+		if (differentSizes) 
+			analysis = "different # of entities across cluster";
+		else {
+			analysis = "same content at 50: ";
+			for (boolean sameContentAt50 : clusterSameContentAt50) {
+				analysis += sameContentAt50 +" ";
+			}
+		}
+		return analysis;
+	}
+	
+	private static List<List<String>> readListFile(File listFile) throws IOException {
+		List<List<String>> list = new ArrayList<>();
 		try (
 		BufferedReader br = new BufferedReader(new FileReader(listFile));) {
 			String line;
@@ -137,9 +222,10 @@ public class GetAssemblyPredictions {
 				if (line.startsWith("#")) continue;
 				
 				String[] tokens = line.split("\\s+");
-				
+				List<String> sublist = new ArrayList<>();
+				list.add(sublist);
 				for (String token: tokens) {
-					list.add(token);
+					sublist.add(token);
 				}
 			}
 		}
