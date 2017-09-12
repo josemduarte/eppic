@@ -6,7 +6,9 @@ import java.io.FileReader;
 import java.io.IOException;
 import java.io.PrintStream;
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 
 import javax.persistence.EntityManager;
 
@@ -89,13 +91,13 @@ public class GetAssemblyPredictions {
 		
 		System.out.println("Read " + clusters.size() + " clusters from file " + listFile.toString());
 		
-		List<List<SeqClusterDB>> allSeqInfosForCluster = new ArrayList<>();
 		EppicParams params = new EppicParams();
 		int i = 0;
 		for (List<String> cluster : clusters) {
 			i++;
-			ps.printf("### Cluster %d - %d members\n", i, cluster.size()); 
+			ps.printf("### Group %d - %d entries\n", i, cluster.size()); 
 
+			List<List<SeqClusterDB>> allSeqInfosForCluster = new ArrayList<>();
 			for (String pdbId : cluster) {
 
 				EntityManager em = dbh.getEntityManager();
@@ -134,6 +136,7 @@ public class GetAssemblyPredictions {
 			}
 			ps.print(analyseClusterContents(allSeqInfosForCluster));
 			ps.println();
+			ps.println();
 		}
 		
 		ps.close();
@@ -143,6 +146,8 @@ public class GetAssemblyPredictions {
 		
 	}
 	
+	
+	@SuppressWarnings("unused")
 	private static String getSeqClustersInfo(PdbInfoDB pdbInfo) {
 		StringBuilder sb = new StringBuilder();
 		for (ChainClusterDB cc : pdbInfo.getChainClusters()) {
@@ -166,50 +171,26 @@ public class GetAssemblyPredictions {
 	}
 	
 	private static String analyseClusterContents(List<List<SeqClusterDB>> allSeqInfosForCluster) {
-		int numEntitiesFirstEntry = -1;
+		Map<Integer, Integer> countsPerC50 = new HashMap<>();
 		
-		boolean differentSizes = false;
-		boolean[] clusterSameContentAt50 = null;
+		int clusterSize = allSeqInfosForCluster.size();
 		
 		for (List<SeqClusterDB> seqInfosForEntry : allSeqInfosForCluster) {
-			if (numEntitiesFirstEntry == -1) 
-				numEntitiesFirstEntry = seqInfosForEntry.size();
-			else {
-				if (seqInfosForEntry.size() != numEntitiesFirstEntry) {
-					differentSizes = true;
-					continue;
-				}
-			}
-			// the references for each entity in an entry, assuming all members of cluster have same # of entities 
-			int[] refSeq50s = new int[numEntitiesFirstEntry];
-			for (int i=0;i<refSeq50s.length;i++) refSeq50s[i] = -2;
-			
-			clusterSameContentAt50 = new boolean[numEntitiesFirstEntry];
-			for (int i=0;i<clusterSameContentAt50.length;i++) clusterSameContentAt50[i] = true;
-			
-			int i = 0;
 			for (SeqClusterDB sc : seqInfosForEntry) {
-				if (refSeq50s[i]==-2) 
-					refSeq50s[i] = sc.getC50();
-				else {
-					if (sc.getC50() != refSeq50s[i]) {
-						clusterSameContentAt50[i] = false;
-					}
+				if (sc==null) continue;
+				
+				if (!countsPerC50.containsKey(sc.getC50())) {
+					countsPerC50.put(sc.getC50(), 1);
+				} else {
+					countsPerC50.put(sc.getC50(), countsPerC50.get(sc.getC50())+1);
 				}
-				i++;
-			}
-
-		}
-		String analysis = "";
-		if (differentSizes) 
-			analysis = "different # of entities across cluster";
-		else {
-			analysis = "same content at 50: ";
-			for (boolean sameContentAt50 : clusterSameContentAt50) {
-				analysis += sameContentAt50 +" ";
 			}
 		}
-		return analysis;
+		String contentAnalysis = "Content (50% seq cluster ids): ";
+		for (int c50 : countsPerC50.keySet()) {
+			contentAnalysis += c50 + "(" + countsPerC50.get(c50) + "/" + clusterSize + ") ";
+		}
+		return contentAnalysis;
 	}
 	
 	private static List<List<String>> readListFile(File listFile) throws IOException {
